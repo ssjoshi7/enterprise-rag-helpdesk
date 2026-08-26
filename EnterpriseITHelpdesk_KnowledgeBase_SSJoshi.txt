@@ -1,0 +1,14 @@
+PASSWORD RESET
+Steps: Go to company IT portal. Click Forgot Password. Enter your employee email. Check inbox for reset link. Follow instructions. Password must be 8+ characters with uppercase, number and symbol.
+
+JIRA TICKET CREATION
+Steps: Go to jira.company.com. Click Create button. Select project. Choose issue type. Add title and description. Assign priority. Click Submit.
+
+SALESFORCE ACCESS REQUEST
+Steps: Submit IT request form. Manager approval required. IT team processes within 2 business days. Confirmation email sent. Login with company SSO credentials.
+
+VPN SETUP
+Steps: Download Cisco AnyConnect. Enter server address vpn.company.com. Use employee ID and password. Contact IT if connection fails.
+
+ESCALATION
+If issue cannot be resolved through standard steps. Contact IT support team. Email: swapniljoshi1729@gmail.com. Phone: +91 9371615190. Available Monday-Friday 9AM-6PM IST.

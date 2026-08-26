@@ -1,0 +1,16 @@
+# Secrets
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+rag_env/
+
+# ChromaDB data
+chroma_db/
+
+# OS/editor junk
+.DS_Store
+.vscode/
