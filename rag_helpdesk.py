@@ -5,13 +5,19 @@ from chromadb.utils import embedding_functions
 
 # ── Configuration ──────────────────────────────────────────────
 import os
-try:
-    import streamlit as st
-    CLAUDE_API_KEY = st.secrets["CLAUDE_API_KEY"]
-except Exception:
-    from dotenv import load_dotenv
-    load_dotenv()
-    CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
+
+# Try Streamlit secrets first, fall back to .env
+if "CLAUDE_API_KEY" in os.environ:
+    CLAUDE_API_KEY = os.environ["CLAUDE_API_KEY"]
+else:
+    try:
+        import streamlit as st
+        CLAUDE_API_KEY = st.secrets["CLAUDE_API_KEY"]
+    except Exception:
+        from dotenv import load_dotenv
+        load_dotenv()
+        CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
+
 KB_FILE = "EnterpriseITHelpdesk_KnowledgeBase_SSJoshi.txt"
 COLLECTION_NAME = "it_helpdesk_kb"
 
