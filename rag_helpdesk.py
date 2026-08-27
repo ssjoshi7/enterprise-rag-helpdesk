@@ -4,10 +4,14 @@ import chromadb
 from chromadb.utils import embedding_functions
 
 # ── Configuration ──────────────────────────────────────────────
-from dotenv import load_dotenv
 import os
-load_dotenv()
-CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
+try:
+    import streamlit as st
+    CLAUDE_API_KEY = st.secrets["CLAUDE_API_KEY"]
+except Exception:
+    from dotenv import load_dotenv
+    load_dotenv()
+    CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
 KB_FILE = "EnterpriseITHelpdesk_KnowledgeBase_SSJoshi.txt"
 COLLECTION_NAME = "it_helpdesk_kb"
 
