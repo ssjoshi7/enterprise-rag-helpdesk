@@ -10,6 +10,24 @@ if "CLAUDE_API_KEY" in st.secrets:
 if "AIRTABLE_TOKEN" in st.secrets:
     os.environ["AIRTABLE_TOKEN"] = st.secrets["AIRTABLE_TOKEN"]
 
+# Index documents on startup if collection is empty
+import chromadb
+from chromadb.utils import embedding_functions
+
+chroma_client = chromadb.PersistentClient(path="./chroma_db")
+embedding_fn = embedding_functions.DefaultEmbeddingFunction()
+collection = chroma_client.get_or_create_collection(
+    name="it_helpdesk_kb",
+    embedding_function=embedding_fn
+)
+
+if collection.count() == 0:
+    with open("EnterpriseITHelpdesk_KnowledgeBase_SSJoshi.txt", "r") as f:
+        content = f.read()
+    chunks = [chunk.strip() for chunk in content.split("\n\n") if chunk.strip()]
+    ids = [f"chunk_{i}" for i in range(len(chunks))]
+    collection.add(documents=chunks, ids=ids)
+
 # Now import agents — they'll find keys in os.environ
 from v3_agent import create_context, router_agent, knowledge_agent, ticketing_agent
 
