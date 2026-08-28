@@ -5,16 +5,20 @@ import requests
 from chromadb.utils import embedding_functions
 
 # ── Load API Key ────────────────────────────────────────────────
+import os
 if os.path.exists(".env"):
     from dotenv import load_dotenv
     load_dotenv()
     CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
+    AIRTABLE_TOKEN = os.getenv("AIRTABLE_TOKEN")
 else:
     try:
         import streamlit as st
         CLAUDE_API_KEY = st.secrets["CLAUDE_API_KEY"]
+        AIRTABLE_TOKEN = st.secrets["AIRTABLE_TOKEN"]
     except Exception:
         CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
+        AIRTABLE_TOKEN = os.getenv("AIRTABLE_TOKEN")
 
 # ── Shared Context ──────────────────────────────────────────────
 def create_context(user_message):
@@ -128,7 +132,7 @@ def ticketing_agent(context):
     print(f"   Logging ticket for: '{context['user_message']}'")
     
     # Airtable configuration
-    AIRTABLE_TOKEN = os.getenv("AIRTABLE_TOKEN")
+   # AIRTABLE_TOKEN = os.getenv("AIRTABLE_TOKEN")
     AIRTABLE_BASE_ID = "appeA7AAUGMuiGmvp"
     AIRTABLE_TABLE = "Tickets"
     
