@@ -1,6 +1,18 @@
 import streamlit as st
 from v3_agent import create_context, router_agent, knowledge_agent, ticketing_agent
 
+import streamlit as st
+import os
+
+# Load secrets in Streamlit context first
+if "CLAUDE_API_KEY" in st.secrets:
+    os.environ["CLAUDE_API_KEY"] = st.secrets["CLAUDE_API_KEY"]
+if "AIRTABLE_TOKEN" in st.secrets:
+    os.environ["AIRTABLE_TOKEN"] = st.secrets["AIRTABLE_TOKEN"]
+
+# Now import agents — they'll find keys in os.environ
+from v3_agent import create_context, router_agent, knowledge_agent, ticketing_agent
+
 st.set_page_config(
     page_title="Enterprise IT Helpdesk V3",
     page_icon="🤖",
