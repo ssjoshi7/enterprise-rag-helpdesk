@@ -181,7 +181,16 @@ def ticketing_agent(context):
         # Extract actual issue from conversation history
     actual_issue = context["user_message"]
     
-    meta_phrases = ["create a ticket", "support ticket", "log a ticket", "this concern", "my concern"]
+    meta_phrases = [
+    "create a ticket", 
+    "support ticket", 
+    "log a ticket", 
+    "this concern", 
+    "my concern",
+    "this issue",
+    "for this issue",
+    "please create"
+]
     is_meta_request = any(phrase in context["user_message"].lower() for phrase in meta_phrases)
     
     # Check if current message contains a specific issue description
