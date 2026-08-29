@@ -80,7 +80,10 @@ if prompt := st.chat_input("Ask your IT question or describe your issue..."):
         
         # Check if awaiting confirmation
         if st.session_state.awaiting_confirmation:
-            if prompt.lower().strip() in ["yes", "y", "yes please", "confirm", "go ahead", "proceed"]:
+            confirmation_words = ["yes", "y", "yes please", "confirm", "go ahead", "proceed", 
+                      "sure", "ok", "okay", "correct", "right", "yep", "yeah", 
+                      "absolutely", "definitely", "please do", "do it"]
+            if any(word in prompt.lower().strip() for word in confirmation_words):
                 # User confirmed — create ticket
                 st.info("🔀 Router → 🎫 Ticketing Agent")
                 context = create_context(st.session_state.pending_issue, 
