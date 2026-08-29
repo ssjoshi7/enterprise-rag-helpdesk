@@ -2,15 +2,15 @@ import streamlit as st
 import os
 
 # ── Google OAuth SSO ────────────────────────────────────────────
-if not st.experimental_user.is_logged_in:
+if not st.user.is_logged_in:
     st.title("🔐 Enterprise IT Helpdesk — Secure Login")
     st.write("Please sign in with your Google account to access the helpdesk.")
     st.button("Sign in with Google", on_click=st.login)
     st.stop()
 
 # Show logged in user
-user_email = st.experimental_user.email
-user_name = st.experimental_user.name
+user_email = st.user.email
+user_name = st.user.name
 
 # ── Sidebar — user info + logout ────────────────────────────────
 with st.sidebar:
