@@ -1,14 +1,31 @@
 import streamlit as st
-from v3_agent import create_context, router_agent, knowledge_agent, ticketing_agent
-
-import streamlit as st
 import os
+
+# ── Google OAuth SSO ────────────────────────────────────────────
+if not st.experimental_user.is_logged_in:
+    st.title("🔐 Enterprise IT Helpdesk — Secure Login")
+    st.write("Please sign in with your Google account to access the helpdesk.")
+    st.button("Sign in with Google", on_click=st.login)
+    st.stop()
+
+# Show logged in user
+user_email = st.experimental_user.email
+user_name = st.experimental_user.name
+
+# ── Sidebar — user info + logout ────────────────────────────────
+with st.sidebar:
+    st.write(f"👤 {user_name}")
+    st.write(f"📧 {user_email}")
+    st.button("Logout", on_click=st.logout)
 
 # Load secrets in Streamlit context first
 if "CLAUDE_API_KEY" in st.secrets:
     os.environ["CLAUDE_API_KEY"] = st.secrets["CLAUDE_API_KEY"]
 if "AIRTABLE_TOKEN" in st.secrets:
     os.environ["AIRTABLE_TOKEN"] = st.secrets["AIRTABLE_TOKEN"]
+
+# ── Now import agents ───────────────────────────────────────────
+from v3_agent import create_context, router_agent, knowledge_agent, ticketing_agent
 
 # Index documents on startup if collection is empty
 import chromadb
@@ -38,7 +55,7 @@ st.set_page_config(
 )
 
 st.title("🤖 Enterprise IT Helpdesk — Multi-Agent V3")
-st.caption("Powered by Multi-Agent RAG + ChromaDB + Claude AI + Airtable | Built by Swapnil Joshi")
+st.caption(f"Powered by Multi-Agent RAG + ChromaDB + Claude AI + Airtable | Built by Swapnil Joshi | Logged in as: {user_name} ({user_email})")
 st.divider()
 
 # Agent status indicators
