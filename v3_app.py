@@ -80,13 +80,28 @@ if prompt := st.chat_input("Ask your IT question or describe your issue..."):
             context = router_agent(context)
             intent = context["intent"]
             
-            # Route to correct agent
-            if intent == "KNOWLEDGE":
+                        # Route to correct agent
+            # TICKET requires 90%+ confidence — external actions need explicit intent
+            TICKET_CONFIDENCE_THRESHOLD = 0.90
+            
+            if context["intent"] == "KNOWLEDGE":
                 st.info("🔀 Router → 📚 Knowledge Agent")
                 context = knowledge_agent(context)
-            else:
+            elif context["intent"] == "TICKET" and context["confidence"] >= TICKET_CONFIDENCE_THRESHOLD:
                 st.info("🔀 Router → 🎫 Ticketing Agent")
                 context = ticketing_agent(context)
+            else:
+                if context["intent"] == "TICKET":
+                    clarify_response = f"I want to make sure I create the right ticket. Could you confirm — shall I log a support ticket for: '{context['user_message']}'?"
+                else:
+                    clarify_response = "I want to make sure I help you correctly. Are you looking for troubleshooting guidance, or would you like me to create a support ticket? Please clarify and I'll take the right action."
+                st.info("🔀 Router → ❓ Clarification needed")
+                st.markdown(clarify_response)
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": clarify_response
+                })
+                st.stop()
             
             response = context["response"]
             st.markdown(response)
