@@ -180,12 +180,20 @@ def ticketing_agent(context):
 
         # Extract actual issue from conversation history
     actual_issue = context["user_message"]
-    if context["conversation_history"] and len(context["conversation_history"]) > 1:
-        # Find first user message that describes the actual problem
+    
+    meta_phrases = ["create a ticket", "support ticket", "log a ticket", "this concern", "my concern"]
+    is_meta_request = any(phrase in context["user_message"].lower() for phrase in meta_phrases)
+    
+    # Check if current message contains a specific issue description
+    has_specific_issue = len(context["user_message"].split()) > 6  # More than 6 words = specific
+    
+    if is_meta_request and not has_specific_issue and context["conversation_history"]:
         for msg in reversed(context["conversation_history"]):
-            if msg["role"] == "user" and msg["content"] not in ["quit"] and "ticket" not in msg["content"].lower() and "create" not in msg["content"].lower():
-                actual_issue = msg["content"]
-                break
+            if msg["role"] == "user":
+                is_also_meta = any(phrase in msg["content"].lower() for phrase in meta_phrases)
+                if not is_also_meta and len(msg["content"]) > 10:
+                    actual_issue = msg["content"]
+                    break
     
     print(f"   Actual issue identified: '{actual_issue}'")
     
@@ -215,7 +223,7 @@ def ticketing_agent(context):
         context["response"] = f"""✅ Support ticket logged successfully!
 
 **Ticket ID:** {ticket_id}
-**Issue:** {context['user_message']}
+**Issue:** {actual_issue}
 **Status:** Open
 **Priority:** Medium
 
@@ -257,23 +265,22 @@ if __name__ == "__main__":
         # Step 1 — Router
         context = router_agent(context)
         
-        # Step 2 — Route to correct agent
+                # Step 2 — Route to correct agent
+        # TICKET requires 90%+ confidence — external actions need explicit intent
+        TICKET_CONFIDENCE_THRESHOLD = 0.90
+
         if context["intent"] == "KNOWLEDGE":
             context = knowledge_agent(context)
             print(f"\n🤖 Answer:\n{context['response']}")
-            conversation_history.append({
-                "role": "assistant",
-                "content": context["response"]
-            })
-        elif context["intent"] == "TICKET":
+        elif context["intent"] == "TICKET" and context["confidence"] >= TICKET_CONFIDENCE_THRESHOLD:
             context = ticketing_agent(context)
             print(f"\n🎫 Response:\n{context['response']}")
-            conversation_history.append({
-                "role": "assistant",
-                "content": context["response"]
-            })
-        else:  # CLARIFY
-            clarify_response = "I want to make sure I help you correctly. Are you looking for troubleshooting guidance, or would you like me to create a support ticket? Please clarify and I'll take the right action."
+        else:
+            # Low confidence TICKET or CLARIFY — ask for clarification
+            if context["intent"] == "TICKET":
+                clarify_response = f"I want to make sure I create the right ticket. Could you confirm — shall I log a support ticket for: '{context['user_message']}'?"
+            else:
+                clarify_response = "I want to make sure I help you correctly. Are you looking for troubleshooting guidance, or would you like me to create a support ticket? Please clarify and I'll take the right action."
             print(f"\n❓ Clarification needed:\n{clarify_response}")
             conversation_history.append({
                 "role": "assistant",
