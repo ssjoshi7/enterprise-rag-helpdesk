@@ -60,6 +60,11 @@ if "messages" not in st.session_state:
         "content": "Hi! I'm your Multi-Agent IT Helpdesk assistant. I can answer IT questions or log support tickets automatically. How can I help you today?"
     })
 
+if "awaiting_confirmation" not in st.session_state:
+    st.session_state.awaiting_confirmation = False
+if "pending_issue" not in st.session_state:
+    st.session_state.pending_issue = None
+
 # Display chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
@@ -72,41 +77,69 @@ if prompt := st.chat_input("Ask your IT question or describe your issue..."):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("Multi-agent system processing..."):
-            # Create shared context
-            context = create_context(prompt)
-            
-            # Router Agent
-            context = router_agent(context)
-            intent = context["intent"]
-            
-                        # Route to correct agent
-            # TICKET requires 90%+ confidence — external actions need explicit intent
-            TICKET_CONFIDENCE_THRESHOLD = 0.90
-            
-            if context["intent"] == "KNOWLEDGE":
-                st.info("🔀 Router → 📚 Knowledge Agent")
-                context = knowledge_agent(context)
-            elif context["intent"] == "TICKET" and context["confidence"] >= TICKET_CONFIDENCE_THRESHOLD:
+        
+        # Check if awaiting confirmation
+        if st.session_state.awaiting_confirmation:
+            if prompt.lower().strip() in ["yes", "y", "yes please", "confirm", "go ahead", "proceed"]:
+                # User confirmed — create ticket
                 st.info("🔀 Router → 🎫 Ticketing Agent")
+                context = create_context(st.session_state.pending_issue, 
+                                       [m for m in st.session_state.messages])
+                context["intent"] = "TICKET"
+                context["confidence"] = 1.0
                 context = ticketing_agent(context)
+                response = context["response"]
+                st.session_state.awaiting_confirmation = False
+                st.session_state.pending_issue = None
             else:
-                if context["intent"] == "TICKET":
-                    clarify_response = f"I want to make sure I create the right ticket. Could you confirm — shall I log a support ticket for: '{context['user_message']}'?"
-                else:
-                    clarify_response = "I want to make sure I help you correctly. Are you looking for troubleshooting guidance, or would you like me to create a support ticket? Please clarify and I'll take the right action."
-                st.info("🔀 Router → ❓ Clarification needed")
-                st.markdown(clarify_response)
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": clarify_response
-                })
-                st.stop()
+                # User said something else — reset and reprocess
+                st.session_state.awaiting_confirmation = False
+                st.session_state.pending_issue = None
+                response = "No problem! How else can I help you?"
             
-            response = context["response"]
             st.markdown(response)
-
-    st.session_state.messages.append({
-        "role": "assistant",
-        "content": response
-    })
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": response
+            })
+        
+        else:
+            with st.spinner("Multi-agent system processing..."):
+                # Create shared context
+                context = create_context(prompt, 
+                    [m for m in st.session_state.messages[:-1]])
+                
+                # Router Agent
+                context = router_agent(context)
+                intent = context["intent"]
+                confidence = context["confidence"]
+                
+                TICKET_CONFIDENCE_THRESHOLD = 0.90
+                
+                if context["intent"] == "KNOWLEDGE":
+                    st.info("🔀 Router → 📚 Knowledge Agent")
+                    context = knowledge_agent(context)
+                    response = context["response"]
+                    
+                elif context["intent"] == "TICKET" and context["confidence"] >= TICKET_CONFIDENCE_THRESHOLD:
+                    st.info("🔀 Router → 🎫 Ticketing Agent")
+                    context = ticketing_agent(context)
+                    response = context["response"]
+                    
+                else:
+                    # CLARIFY or low confidence TICKET
+                    if context["intent"] == "TICKET":
+                        # Ask for confirmation before creating ticket
+                        response = f"I want to make sure I create the right ticket. Could you confirm — shall I log a support ticket for: '{prompt}'? (Reply 'yes' to confirm)"
+                        st.session_state.awaiting_confirmation = True
+                        st.session_state.pending_issue = prompt
+                    else:
+                        response = "I want to make sure I help you correctly. Are you looking for troubleshooting guidance, or would you like me to create a support ticket? Please clarify and I'll take the right action."
+                    
+                    st.info("🔀 Router → ❓ Clarification needed")
+                    
+                st.markdown(response)
+                st.session_state.messages.append({
+                    "role": "assistant", 
+                    "content": response
+                })
