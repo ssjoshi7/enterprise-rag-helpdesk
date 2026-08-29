@@ -3,3 +3,4 @@ chromadb
 streamlit
 python-dotenv
 authlib
+streamlit[auth]
