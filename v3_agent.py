@@ -110,13 +110,24 @@ def knowledge_agent(context):
     print("\n📚 Knowledge Agent activated")
     print(f"   Searching knowledge base for: '{context['user_message']}'")
     
-    # ── Initialize ChromaDB ─────────────────────────────────────
-    chroma_client = chromadb.PersistentClient(path="./chroma_db")
-    embedding_fn = embedding_functions.DefaultEmbeddingFunction()
-    collection = chroma_client.get_or_create_collection(
-        name="it_helpdesk_kb",
-        embedding_function=embedding_fn
-    )
+    # ── Initialize ChromaDB with failure handling ───────────────
+    try:
+        chroma_client = chromadb.PersistentClient(path="./chroma_db")
+        embedding_fn = embedding_functions.DefaultEmbeddingFunction()
+        collection = chroma_client.get_or_create_collection(
+            name="it_helpdesk_kb",
+            embedding_function=embedding_fn
+        )
+    except Exception as e:
+        print(f"   ❌ ChromaDB connection failed: {e}")
+        context["response"] = """Our knowledge base is temporarily unavailable.
+
+Please contact IT Support directly:
+📧 Email: swapniljoshi1729@gmail.com
+📞 Phone: +91 9371615190
+🕐 Available: Monday–Friday, 9AM–6PM IST"""
+        context["retrieval_log"] = [{"error": "ChromaDB connection failed", "detail": str(e)}]
+        return context
     
     # ── Smart search query from conversation history ────────────
     search_query = context["user_message"]
@@ -128,19 +139,27 @@ def knowledge_agent(context):
     
     print(f"   Searching for: '{search_query}'")
     
-    # ── Semantic search with similarity scores ──────────────────
-    results = collection.query(
-        query_texts=[search_query],
-        n_results=3,
-        include=["documents", "distances"]
-    )
-    
-    chunks = results["documents"][0]
-    distances = results["distances"][0]
+    # ── Semantic search with failure handling ───────────────────
+    try:
+        results = collection.query(
+            query_texts=[search_query],
+            n_results=3,
+            include=["documents", "distances"]
+        )
+        chunks = results["documents"][0]
+        distances = results["distances"][0]
+    except Exception as e:
+        print(f"   ❌ ChromaDB query failed: {e}")
+        context["response"] = """Unable to search the knowledge base at this time.
+
+Please contact IT Support directly:
+📧 Email: swapniljoshi1729@gmail.com
+📞 Phone: +91 9371615190
+🕐 Available: Monday–Friday, 9AM–6PM IST"""
+        context["retrieval_log"] = [{"error": "ChromaDB query failed", "detail": str(e)}]
+        return context
     
     # ── Retrieval Logging ───────────────────────────────────────
-    # Convert distance to similarity score (ChromaDB uses L2 distance)
-    # Lower distance = more similar. We convert to 0-1 score for readability
     similarity_scores = [round(1 / (1 + d), 3) for d in distances]
     
     print(f"\n   📊 Retrieval Log:")
@@ -148,7 +167,6 @@ def knowledge_agent(context):
     for i, (chunk, score) in enumerate(zip(chunks, similarity_scores)):
         print(f"   Chunk {i+1} | Score: {score} | Preview: '{chunk[:60]}...'")
     
-    # Store retrieval log in context
     context["retrieval_log"] = [
         {"chunk_index": i+1, "similarity_score": score, "chunk_preview": chunk[:100]}
         for i, (chunk, score) in enumerate(zip(chunks, similarity_scores))
@@ -158,8 +176,8 @@ def knowledge_agent(context):
     SIMILARITY_THRESHOLD = 0.5
     
     strong_chunks = [
-        chunk for chunk, score 
-        in zip(chunks, similarity_scores) 
+        chunk for chunk, score
+        in zip(chunks, similarity_scores)
         if score >= SIMILARITY_THRESHOLD
     ]
     
@@ -178,17 +196,23 @@ Please contact IT Support directly:
         context["retrieval_log"].append({"threshold_result": "FAILED — escalated"})
         return context
     
-    # ── Claude grounded generation with strong chunks only ──────
+    # ── Claude grounded generation with retry ───────────────────
     print(f"   ✅ {len(strong_chunks)} strong chunks passed to Claude")
+    
     client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
     context_text = "\n\n".join(strong_chunks)
     
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1024,
-        messages=[{
-            "role": "user",
-            "content": f"""You are an Enterprise IT Helpdesk specialist.
+    MAX_RETRIES = 2
+    
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            print(f"   🔄 Claude generation attempt {attempt}/{MAX_RETRIES}")
+            message = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=1024,
+                messages=[{
+                    "role": "user",
+                    "content": f"""You are an Enterprise IT Helpdesk specialist.
 Answer the user's question using ONLY the context below.
 If the answer is not in the context, say: 'I don't have that information. Please contact IT support at swapniljoshi1729@gmail.com'
 
@@ -198,12 +222,33 @@ Context:
 User Question: {context['user_message']}
 
 Answer:"""
-        }]
-    )
+                }]
+            )
+            context["response"] = message.content[0].text
+            context["retrieval_log"].append({
+                "threshold_result": "PASSED",
+                "chunks_used": len(strong_chunks),
+                "claude_attempt": attempt
+            })
+            print(f"   ✅ Knowledge Agent response generated on attempt {attempt}")
+            return context
+            
+        except Exception as e:
+            print(f"   ⚠️ Claude attempt {attempt} failed: {e}")
+            if attempt == MAX_RETRIES:
+                print(f"   ❌ All Claude attempts failed — escalating")
+                context["response"] = """I was able to find relevant information but encountered an error generating the response.
+
+Please contact IT Support directly:
+📧 Email: swapniljoshi1729@gmail.com
+📞 Phone: +91 9371615190
+🕐 Available: Monday–Friday, 9AM–6PM IST"""
+                context["retrieval_log"].append({
+                    "threshold_result": "PASSED",
+                    "claude_error": str(e),
+                    "final_status": "FAILED — escalated after retries"
+                })
     
-    context["response"] = message.content[0].text
-    context["retrieval_log"].append({"threshold_result": "PASSED", "chunks_used": len(strong_chunks)})
-    print(f"   ✅ Knowledge Agent response generated")
     return context
 
 # ══════════════════════════════════════════════════════════════
@@ -216,29 +261,29 @@ def ticketing_agent(context):
     print("\n🎫 Ticketing Agent activated")
     print(f"   Logging ticket for: '{context['user_message']}'")
     
-    # Airtable configuration
-   # AIRTABLE_TOKEN = os.getenv("AIRTABLE_TOKEN")
+    # ── Airtable configuration ──────────────────────────────────
+    # AIRTABLE_TOKEN = os.getenv("AIRTABLE_TOKEN")
     AIRTABLE_BASE_ID = "appeA7AAUGMuiGmvp"
     AIRTABLE_TABLE = "Tickets"
+    MAX_RETRIES = 2
+    REQUEST_TIMEOUT = 10  # seconds
 
-        # Extract actual issue from conversation history
+    # ── Extract actual issue from conversation history ──────────
     actual_issue = context["user_message"]
     
     meta_phrases = [
-    "create a ticket", 
-    "support ticket", 
-    "log a ticket", 
-    "this concern", 
-    "my concern",
-    "this issue",
-    "for this issue",
-    "please create"
-]
+        "create a ticket",
+        "support ticket",
+        "log a ticket",
+        "this concern",
+        "my concern",
+        "this issue",
+        "for this issue",
+        "please create"
+    ]
     is_meta_request = any(phrase in context["user_message"].lower() for phrase in meta_phrases)
-    
-    # Check if current message contains a specific issue description
-    has_specific_issue = len(context["user_message"].split()) > 6  # More than 6 words = specific
-    
+    has_specific_issue = len(context["user_message"].split()) > 6
+
     if is_meta_request and not has_specific_issue and context["conversation_history"]:
         for msg in reversed(context["conversation_history"]):
             if msg["role"] == "user":
@@ -246,10 +291,10 @@ def ticketing_agent(context):
                 if not is_also_meta and len(msg["content"]) > 10:
                     actual_issue = msg["content"]
                     break
-    
+
     print(f"   Actual issue identified: '{actual_issue}'")
-    
-    # Prepare ticket data
+
+    # ── Prepare ticket payload ──────────────────────────────────
     url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE}"
     headers = {
         "Authorization": f"Bearer {AIRTABLE_TOKEN}",
@@ -264,15 +309,26 @@ def ticketing_agent(context):
             }
         }]
     }
-    
-    # Make API call to Airtable
-    response = requests.post(url, headers=headers, json=payload)
-    
-    if response.status_code == 200:
-        record = response.json()["records"][0]
-        ticket_id = record["id"]
-        context["ticket_id"] = ticket_id
-        context["response"] = f"""✅ Support ticket logged successfully!
+
+    # ── API call with retry logic ───────────────────────────────
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            print(f"   🔄 Airtable API attempt {attempt}/{MAX_RETRIES}")
+            
+            response = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=REQUEST_TIMEOUT
+            )
+
+            # ── Validate response status ────────────────────────
+            if response.status_code == 200:
+                try:
+                    record = response.json()["records"][0]
+                    ticket_id = record["id"]
+                    context["ticket_id"] = ticket_id
+                    context["response"] = f"""✅ Support ticket logged successfully!
 
 **Ticket ID:** {ticket_id}
 **Issue:** {actual_issue}
@@ -283,14 +339,66 @@ Our IT team will follow up at:
 📧 swapniljoshi1729@gmail.com
 📞 +91 9371615190
 🕐 Monday–Friday, 9AM–6PM IST"""
-        print(f"   ✅ Ticket created: {ticket_id}")
-    else:
-        context["response"] = """⚠️ Could not log ticket automatically.
+                    print(f"   ✅ Ticket created: {ticket_id}")
+                    return context
+
+                except (KeyError, IndexError, ValueError) as e:
+                    print(f"   ⚠️ Malformed Airtable response: {e}")
+                    if attempt == MAX_RETRIES:
+                        context["response"] = """⚠️ Ticket was submitted but response was unexpected.
+Please contact IT support to confirm:
+📧 swapniljoshi1729@gmail.com
+📞 +91 9371615190"""
+                    continue
+
+            elif response.status_code == 401:
+                print(f"   ❌ Airtable authentication failed — invalid token")
+                context["response"] = """⚠️ Unable to log ticket — authentication error.
 Please contact IT support directly:
 📧 swapniljoshi1729@gmail.com
 📞 +91 9371615190"""
-        print(f"   ⚠️ Airtable API error: {response.status_code}")
-    
+                return context
+
+            elif response.status_code == 422:
+                print(f"   ❌ Airtable rejected payload — malformed data")
+                context["response"] = """⚠️ Unable to log ticket — invalid ticket data.
+Please contact IT support directly:
+📧 swapniljoshi1729@gmail.com
+📞 +91 9371615190"""
+                return context
+
+            else:
+                print(f"   ⚠️ Airtable returned status {response.status_code}")
+                if attempt == MAX_RETRIES:
+                    context["response"] = f"""⚠️ Could not log ticket automatically (Error {response.status_code}).
+Please contact IT support directly:
+📧 swapniljoshi1729@gmail.com
+📞 +91 9371615190"""
+
+        except requests.exceptions.Timeout:
+            print(f"   ⚠️ Airtable request timed out on attempt {attempt}")
+            if attempt == MAX_RETRIES:
+                context["response"] = """⚠️ Ticket logging timed out after multiple attempts.
+Please contact IT support directly:
+📧 swapniljoshi1729@gmail.com
+📞 +91 9371615190"""
+
+        except requests.exceptions.ConnectionError:
+            print(f"   ⚠️ Airtable connection error on attempt {attempt}")
+            if attempt == MAX_RETRIES:
+                context["response"] = """⚠️ Unable to reach ticketing system.
+Please contact IT support directly:
+📧 swapniljoshi1729@gmail.com
+📞 +91 9371615190"""
+
+        except Exception as e:
+            print(f"   ⚠️ Unexpected error on attempt {attempt}: {e}")
+            if attempt == MAX_RETRIES:
+                context["response"] = """⚠️ An unexpected error occurred while logging your ticket.
+Please contact IT support directly:
+📧 swapniljoshi1729@gmail.com
+📞 +91 9371615190"""
+
     return context
 
 # ── Entry point for testing ─────────────────────────────────────
