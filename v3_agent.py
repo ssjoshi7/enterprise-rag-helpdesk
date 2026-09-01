@@ -251,6 +251,37 @@ Please contact IT Support directly:
     
     return context
 
+# ── Extract actual issue using Claude ───────────────────────
+def extract_actual_issue(context):
+    client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
+    
+    history_text = "\n".join([
+        f"{msg['role'].upper()}: {msg['content']}"
+        for msg in context["conversation_history"][-6:]
+    ])
+    
+    try:
+        message = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=100,
+            messages=[{
+                "role": "user",
+                "content": f"""Given this conversation, extract the actual IT issue the user is experiencing.
+Return ONLY the issue description in one sentence. Nothing else.
+
+Conversation:
+{history_text}
+
+Latest message: {context['user_message']}
+
+Actual issue:"""
+            }]
+        )
+        return message.content[0].text.strip()
+    except Exception as e:
+        print(f"   ⚠️ Issue extraction failed: {e}")
+        return context["user_message"]  # fallback to current message
+
 # ══════════════════════════════════════════════════════════════
 # AGENT 3 — TICKETING AGENT
 # Responsibility: Log support ticket to Airtable via REST API
@@ -269,29 +300,7 @@ def ticketing_agent(context):
     REQUEST_TIMEOUT = 10  # seconds
 
     # ── Extract actual issue from conversation history ──────────
-    actual_issue = context["user_message"]
-    
-    meta_phrases = [
-        "create a ticket",
-        "support ticket",
-        "log a ticket",
-        "this concern",
-        "my concern",
-        "this issue",
-        "for this issue",
-        "please create"
-    ]
-    is_meta_request = any(phrase in context["user_message"].lower() for phrase in meta_phrases)
-    has_specific_issue = len(context["user_message"].split()) > 6
-
-    if is_meta_request and not has_specific_issue and context["conversation_history"]:
-        for msg in reversed(context["conversation_history"]):
-            if msg["role"] == "user":
-                is_also_meta = any(phrase in msg["content"].lower() for phrase in meta_phrases)
-                if not is_also_meta and len(msg["content"]) > 10:
-                    actual_issue = msg["content"]
-                    break
-
+    actual_issue = extract_actual_issue(context)
     print(f"   Actual issue identified: '{actual_issue}'")
 
     # ── Prepare ticket payload ──────────────────────────────────
