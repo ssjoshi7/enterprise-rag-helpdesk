@@ -25,6 +25,7 @@ def create_context(user_message, conversation_history=None):
     return {
         "user_message": user_message,
         "conversation_history": conversation_history or [],
+        "retrieval_log": [],
         "intent": None,
         "confidence": None,
         "reason": None,
@@ -109,7 +110,7 @@ def knowledge_agent(context):
     print("\n📚 Knowledge Agent activated")
     print(f"   Searching knowledge base for: '{context['user_message']}'")
     
-    # Initialize ChromaDB
+    # ── Initialize ChromaDB ─────────────────────────────────────
     chroma_client = chromadb.PersistentClient(path="./chroma_db")
     embedding_fn = embedding_functions.DefaultEmbeddingFunction()
     collection = chroma_client.get_or_create_collection(
@@ -117,10 +118,9 @@ def knowledge_agent(context):
         embedding_function=embedding_fn
     )
     
-        # Use original issue from history for better semantic search
+    # ── Smart search query from conversation history ────────────
     search_query = context["user_message"]
     if context["conversation_history"] and len(context["conversation_history"]) > 2:
-        # Find first substantive user message
         for msg in reversed(context["conversation_history"]):
             if msg["role"] == "user" and len(msg["content"]) > 15 and "guidance" not in msg["content"].lower() and "ticket" not in msg["content"].lower():
                 search_query = msg["content"]
@@ -128,18 +128,60 @@ def knowledge_agent(context):
     
     print(f"   Searching for: '{search_query}'")
     
-    # Semantic search — retrieve top 3 relevant chunks
+    # ── Semantic search with similarity scores ──────────────────
     results = collection.query(
-        query_texts=[search_query], 
-        n_results=3
+        query_texts=[search_query],
+        n_results=3,
+        include=["documents", "distances"]
     )
-    chunks = results["documents"][0]
-    context["retrieved_chunks"] = chunks
-    print(f"   Retrieved {len(chunks)} relevant chunks from ChromaDB")
     
-    # Claude grounded generation
+    chunks = results["documents"][0]
+    distances = results["distances"][0]
+    
+    # ── Retrieval Logging ───────────────────────────────────────
+    # Convert distance to similarity score (ChromaDB uses L2 distance)
+    # Lower distance = more similar. We convert to 0-1 score for readability
+    similarity_scores = [round(1 / (1 + d), 3) for d in distances]
+    
+    print(f"\n   📊 Retrieval Log:")
+    print(f"   Query: '{search_query}'")
+    for i, (chunk, score) in enumerate(zip(chunks, similarity_scores)):
+        print(f"   Chunk {i+1} | Score: {score} | Preview: '{chunk[:60]}...'")
+    
+    # Store retrieval log in context
+    context["retrieval_log"] = [
+        {"chunk_index": i+1, "similarity_score": score, "chunk_preview": chunk[:100]}
+        for i, (chunk, score) in enumerate(zip(chunks, similarity_scores))
+    ]
+    
+    # ── Similarity Threshold ────────────────────────────────────
+    SIMILARITY_THRESHOLD = 0.5
+    
+    strong_chunks = [
+        chunk for chunk, score 
+        in zip(chunks, similarity_scores) 
+        if score >= SIMILARITY_THRESHOLD
+    ]
+    
+    print(f"\n   🎯 Threshold: {SIMILARITY_THRESHOLD}")
+    print(f"   Chunks above threshold: {len(strong_chunks)}/{len(chunks)}")
+    
+    # ── Fallback if no chunks pass threshold ────────────────────
+    if not strong_chunks:
+        print(f"   ⚠️ No chunks above threshold — escalating")
+        context["response"] = """I wasn't able to find sufficiently relevant information in the knowledge base for your query.
+
+Please contact IT Support directly:
+📧 Email: swapniljoshi1729@gmail.com
+📞 Phone: +91 9371615190
+🕐 Available: Monday–Friday, 9AM–6PM IST"""
+        context["retrieval_log"].append({"threshold_result": "FAILED — escalated"})
+        return context
+    
+    # ── Claude grounded generation with strong chunks only ──────
+    print(f"   ✅ {len(strong_chunks)} strong chunks passed to Claude")
     client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
-    context_text = "\n\n".join(chunks)
+    context_text = "\n\n".join(strong_chunks)
     
     message = client.messages.create(
         model="claude-sonnet-4-6",
@@ -160,6 +202,7 @@ Answer:"""
     )
     
     context["response"] = message.content[0].text
+    context["retrieval_log"].append({"threshold_result": "PASSED", "chunks_used": len(strong_chunks)})
     print(f"   ✅ Knowledge Agent response generated")
     return context
 
