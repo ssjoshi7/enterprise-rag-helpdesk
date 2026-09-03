@@ -1,5 +1,6 @@
 import streamlit as st
 import os
+from rbac import get_user_role, can_perform_action, get_allowed_categories, get_role_display
 
 # ── Google OAuth SSO ────────────────────────────────────────────
 if not st.user.is_logged_in:
@@ -39,7 +40,6 @@ if "AIRTABLE_TOKEN" in st.secrets:
 
 # ── Now import agents ───────────────────────────────────────────
 from v3_agent import create_context, router_agent, knowledge_agent, ticketing_agent
-from rbac import get_user_role, can_perform_action, get_allowed_categories, get_role_display
 
 # Index documents on startup if collection is empty
 import chromadb
