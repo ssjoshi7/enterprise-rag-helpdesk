@@ -8,14 +8,27 @@ if not st.user.is_logged_in:
     st.button("Sign in with Google", on_click=st.login)
     st.stop()
 
-# Show logged in user
+# # Show logged in user
 user_email = st.user.email
 user_name = st.user.name
 
-# ── Sidebar — user info + logout ────────────────────────────────
+# ── RBAC — get user role ────────────────────────────────────────
+user_role = get_user_role(user_email, st.secrets)
+role_display = get_role_display(user_role)
+
+# ── Sidebar — user info + role + logout ─────────────────────────
 with st.sidebar:
-    st.write(f"👤 {user_name}")
+    st.write(f"{role_display['icon']} {user_name}")
     st.write(f"📧 {user_email}")
+    st.write(f"🏷️ Role: **{role_display['label']}**")
+    st.divider()
+    
+    # Show role permissions
+    st.caption("Your permissions:")
+    st.write(f"{'✅' if can_perform_action(user_role, 'create_ticket') else '❌'} Create tickets")
+    st.write(f"{'✅' if can_perform_action(user_role, 'view_all_tickets') else '❌'} View all tickets")
+    st.write(f"{'✅' if can_perform_action(user_role, 'access_restricted_kb') else '❌'} Restricted KB access")
+    st.divider()
     st.button("Logout", on_click=st.logout)
 
 # Load secrets in Streamlit context first
@@ -26,6 +39,7 @@ if "AIRTABLE_TOKEN" in st.secrets:
 
 # ── Now import agents ───────────────────────────────────────────
 from v3_agent import create_context, router_agent, knowledge_agent, ticketing_agent
+from rbac import get_user_role, can_perform_action, get_allowed_categories, get_role_display
 
 # Index documents on startup if collection is empty
 import chromadb
@@ -55,7 +69,7 @@ st.set_page_config(
 )
 
 st.title("🤖 Enterprise IT Helpdesk — Multi-Agent V3")
-st.caption(f"Powered by Multi-Agent RAG + ChromaDB + Claude AI + Airtable | Built by Swapnil Joshi | Logged in as: {user_name} ({user_email})")
+st.caption(f"Powered by Multi-Agent RAG + ChromaDB + Claude AI + Airtable | Built by Swapnil Joshi | {role_display['icon']} {user_name} — {role_display['label']}")
 st.divider()
 
 # Agent status indicators
@@ -126,8 +140,10 @@ if prompt := st.chat_input("Ask your IT question or describe your issue..."):
         else:
             with st.spinner("Multi-agent system processing..."):
                 # Create shared context
-                context = create_context(prompt, 
+                context = create_context(prompt,
                     [m for m in st.session_state.messages[:-1]])
+                context["user_role"] = user_role
+                context["user_email"] = user_email
                 
                 # Router Agent
                 context = router_agent(context)
@@ -142,9 +158,20 @@ if prompt := st.chat_input("Ask your IT question or describe your issue..."):
                     response = context["response"]
                     
                 elif context["intent"] == "TICKET" and context["confidence"] >= TICKET_CONFIDENCE_THRESHOLD:
+                # ── RBAC — check ticket creation permission ─────
+                 if can_perform_action(user_role, "create_ticket"):
                     st.info("🔀 Router → 🎫 Ticketing Agent")
+                    context["user_role"] = user_role
                     context = ticketing_agent(context)
                     response = context["response"]
+                 else:
+                    st.warning("🔀 Router → 🚫 Access Denied")
+                    response = f"""⛔ You don't have permission to create support tickets.
+
+Your role: **{role_display['label']}**
+
+Please contact your IT administrator or manager to raise a ticket on your behalf.
+📧 swapniljoshi1729@gmail.com"""
                     
                 else:
                     # CLARIFY or low confidence TICKET
