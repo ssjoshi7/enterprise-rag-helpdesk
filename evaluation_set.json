@@ -1,0 +1,100 @@
+{
+  "evaluation_set": [
+    {
+      "id": "eval-001",
+      "query": "How do I reset my password?",
+      "expected_category": "PASSWORD",
+      "expected_chunk_id": "pwd-001",
+      "expected_keywords": ["IT portal", "Forgot Password", "reset link"],
+      "notes": "Direct password reset query"
+    },
+    {
+      "id": "eval-002",
+      "query": "My account is locked",
+      "expected_category": "PASSWORD",
+      "expected_chunk_id": "pwd-002",
+      "expected_keywords": ["5 failed attempts", "30 minutes", "unlock"],
+      "notes": "Account lockout scenario"
+    },
+    {
+      "id": "eval-003",
+      "query": "How do I create a Jira ticket?",
+      "expected_category": "JIRA",
+      "expected_chunk_id": "jira-001",
+      "expected_keywords": ["jira.company.com", "Create button", "Submit"],
+      "notes": "Direct Jira ticket creation"
+    },
+    {
+      "id": "eval-004",
+      "query": "I need access to Jira",
+      "expected_category": "JIRA",
+      "expected_chunk_id": "jira-002",
+      "expected_keywords": ["request form", "manager", "2 business days"],
+      "notes": "Jira access request"
+    },
+    {
+      "id": "eval-005",
+      "query": "I cant log into Salesforce",
+      "expected_category": "SALESFORCE",
+      "expected_chunk_id": "sf-002",
+      "expected_keywords": ["browser cache", "incognito", "SSO login"],
+      "notes": "Salesforce login issue"
+    },
+    {
+      "id": "eval-006",
+      "query": "My VPN keeps disconnecting",
+      "expected_category": "VPN",
+      "expected_chunk_id": "vpn-002",
+      "expected_keywords": ["internet connection", "AnyConnect", "vpn.company.com"],
+      "notes": "VPN disconnection issue"
+    },
+    {
+      "id": "eval-007",
+      "query": "How do I set up VPN?",
+      "expected_category": "VPN",
+      "expected_chunk_id": "vpn-001",
+      "expected_keywords": ["Cisco AnyConnect", "vpn.company.com", "employee ID"],
+      "notes": "VPN setup"
+    },
+    {
+      "id": "eval-008",
+      "query": "My email inbox is full",
+      "expected_category": "EMAIL",
+      "expected_chunk_id": "email-002",
+      "expected_keywords": ["Sent Items", "Deleted Items", "Archive"],
+      "notes": "Email quota issue"
+    },
+    {
+      "id": "eval-009",
+      "query": "How do I install new software?",
+      "expected_category": "SOFTWARE",
+      "expected_chunk_id": "sw-001",
+      "expected_keywords": ["IT portal", "business justification", "Manager approval"],
+      "notes": "Software installation request"
+    },
+    {
+      "id": "eval-010",
+      "query": "How do I configure a Kubernetes cluster?",
+      "expected_category": "NONE",
+      "expected_chunk_id": null,
+      "expected_keywords": [],
+      "notes": "Out of scope — should escalate"
+    },
+    {
+      "id": "eval-011",
+      "query": "I cant access anything",
+      "expected_category": "AMBIGUOUS",
+      "expected_chunk_id": null,
+      "expected_keywords": [],
+      "notes": "Ambiguous — should use global search"
+    },
+    {
+      "id": "eval-012",
+      "query": "My laptop screen is broken",
+      "expected_category": "HARDWARE",
+      "expected_chunk_id": "hw-001",
+      "expected_keywords": ["display cable", "urgent ticket", "IT support"],
+      "notes": "Hardware issue"
+    }
+  ]
+}
