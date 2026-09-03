@@ -62,7 +62,7 @@ if collection.count() == 0:
     collection.add(documents=chunks, ids=ids)
 
 # Now import agents — they'll find keys in os.environ
-from v3_agent import create_context, router_agent, knowledge_agent, ticketing_agent
+from v3_agent import create_context, router_agent, knowledge_agent, ticketing_agent, update_state
 
 st.set_page_config(
     page_title="Enterprise IT Helpdesk V3",
@@ -184,6 +184,7 @@ Please contact your IT administrator or manager to raise a ticket on your behalf
                         else:
                             response = "I want to make sure I help you correctly. Are you looking for troubleshooting guidance, or would you like me to create a support ticket? Please clarify and I'll take the right action."
 
+                        context = update_state(context, "CLARIFY")
                         st.info("🔀 Router → ❓ Clarification needed")
 
                     st.markdown(response)
