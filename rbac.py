@@ -59,18 +59,19 @@ ROLE_ACTIONS = {
 
 # ── Role lookup — deterministic, not LLM-based ─────────────────
 def get_user_role(email, secrets):
-    """
-    Look up user role from email.
-    Deterministic — no AI involved in authorization decisions.
-    Returns role string or 'EMPLOYEE' as safe default.
-    """
     try:
         roles_config = secrets.get("roles", {})
-        role = roles_config.get(email, "EMPLOYEE")
-        if role not in ROLES:
-            print(f"   ⚠️ Unknown role '{role}' for {email} — defaulting to EMPLOYEE")
+        # Check each role mapping
+        if email == roles_config.get("admin_email"):
+            return "ADMIN"
+        elif email == roles_config.get("it_support_email"):
+            return "IT_SUPPORT"
+        elif email == roles_config.get("manager_email"):
+            return "MANAGER"
+        elif email == roles_config.get("employee_email"):
             return "EMPLOYEE"
-        return role
+        else:
+            return "EMPLOYEE"  # safe default
     except Exception as e:
         print(f"   ⚠️ Role lookup failed: {e} — defaulting to EMPLOYEE")
         return "EMPLOYEE"
