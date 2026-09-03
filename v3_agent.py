@@ -25,16 +25,33 @@ def create_context(user_message, conversation_history=None):
     return {
         "user_message": user_message,
         "conversation_history": conversation_history or [],
-        "retrieval_log": [],
         "intent": None,
         "confidence": None,
         "reason": None,
         "retrieved_chunks": None,
+        "retrieval_log": [],
         "answerability": None,
         "ticket_confirmed": False,
         "ticket_id": None,
-        "response": None
+        "response": None,
+        # V4.2 — Explicit workflow states
+        "workflow_state": "RECEIVED",
+        "workflow_history": ["RECEIVED"],
+        "error_state": None,
+        "duplicate_check": None
     }
+
+# ── Workflow State Manager ──────────────────────────────────────
+def update_state(context, new_state):
+    """
+    Update workflow state and log transition.
+    States: RECEIVED → CLASSIFIED → RETRIEVING → CLARIFYING → CONFIRMING → EXECUTING → SUCCESS/FAILED
+    """
+    old_state = context["workflow_state"]
+    context["workflow_state"] = new_state
+    context["workflow_history"].append(new_state)
+    print(f"   🔄 State: {old_state} → {new_state}")
+    return context
 
 # ══════════════════════════════════════════════════════════════
 # AGENT 1 — ROUTER / ORCHESTRATOR (V3.1)
@@ -98,6 +115,7 @@ Latest message: {context['user_message']}"""
     context["reason"] = reason
     
     print(f"   Intent: {intent} | Confidence: {confidence:.0%} | Reason: {reason}")
+    context = update_state(context, "CLASSIFIED")
     return context
 
 # ══════════════════════════════════════════════════════════════
@@ -118,6 +136,7 @@ def knowledge_agent(context):
             name="it_helpdesk_kb",
             embedding_function=embedding_fn
         )
+        context = update_state(context, "RETRIEVING")
     except Exception as e:
         print(f"   ❌ ChromaDB connection failed: {e}")
         context["response"] = """Our knowledge base is temporarily unavailable.
@@ -187,6 +206,7 @@ Please contact IT Support directly:
     # ── Fallback if no chunks pass threshold ────────────────────
     if not strong_chunks:
         print(f"   ⚠️ No chunks above threshold — escalating")
+        context = update_state(context, "FAILED")
         context["response"] = """I wasn't able to find sufficiently relevant information in the knowledge base for your query.
 
 Please contact IT Support directly:
@@ -230,6 +250,7 @@ Answer:"""
                 "chunks_used": len(strong_chunks),
                 "claude_attempt": attempt
             })
+            context = update_state(context, "SUCCESS")
             print(f"   ✅ Knowledge Agent response generated on attempt {attempt}")
             return context
             
@@ -237,6 +258,7 @@ Answer:"""
             print(f"   ⚠️ Claude attempt {attempt} failed: {e}")
             if attempt == MAX_RETRIES:
                 print(f"   ❌ All Claude attempts failed — escalating")
+                context = update_state(context, "FAILED")
                 context["response"] = """I was able to find relevant information but encountered an error generating the response.
 
 Please contact IT Support directly:
@@ -263,18 +285,19 @@ def extract_actual_issue(context):
     try:
         message = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=100,
+            max_tokens=20,
             messages=[{
                 "role": "user",
-                "content": f"""Given this conversation, extract the actual IT issue the user is experiencing.
-Return ONLY the issue description in one sentence. Nothing else.
+                                "content": f"""Given this conversation, extract the core IT issue in 5 words or less.
+Return ONLY the issue. No explanation. No full sentences. No punctuation.
+Examples: 'laptop broken', 'cannot access Jira', 'VPN not connecting', 'password reset needed'
 
 Conversation:
 {history_text}
 
 Latest message: {context['user_message']}
 
-Actual issue:"""
+Core issue:"""
             }]
         )
         return message.content[0].text.strip()
@@ -282,6 +305,51 @@ Actual issue:"""
         print(f"   ⚠️ Issue extraction failed: {e}")
         return context["user_message"]  # fallback to current message
 
+# ── Duplicate Ticket Detection ──────────────────────────────────
+def check_duplicate_ticket(actual_issue):
+    """
+    Check Airtable for recent tickets with same issue.
+    Returns ticket_id if duplicate found, None otherwise.
+    """
+    print(f"   🔍 Checking for duplicate tickets...")
+    
+    url = f"https://api.airtable.com/v0/{os.getenv('AIRTABLE_BASE_ID', 'appeA7AAUGMuiGmvp')}/Tickets"
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            records = response.json().get("records", [])
+            
+            # Check last 10 tickets for similar issue
+            for record in records[-10:]:
+                existing_title = record.get("fields", {}).get("Title", "").lower()
+                current_issue = actual_issue.lower()
+                
+                # Simple similarity check — if 60%+ words match
+                existing_words = set(existing_title.split())
+                current_words = set(current_issue.split())
+                
+                if len(current_words) > 0:
+                    overlap = len(existing_words.intersection(current_words))
+                    similarity = overlap / len(current_words)
+                    
+                    if similarity >= 0.4:
+                        duplicate_id = record["id"]
+                        print(f"   ⚠️ Duplicate detected: {duplicate_id} — '{existing_title}'")
+                        return duplicate_id
+            
+            print(f"   ✅ No duplicate found — proceeding with ticket creation")
+            return None
+            
+    except Exception as e:
+        print(f"   ⚠️ Duplicate check failed: {e} — proceeding anyway")
+        return None
+    
 # ══════════════════════════════════════════════════════════════
 # AGENT 3 — TICKETING AGENT
 # Responsibility: Log support ticket to Airtable via REST API
@@ -302,6 +370,29 @@ def ticketing_agent(context):
     # ── Extract actual issue from conversation history ──────────
     actual_issue = extract_actual_issue(context)
     print(f"   Actual issue identified: '{actual_issue}'")
+
+    # ── V4.2 Workflow state + Duplicate check ───────────────────
+    context = update_state(context, "EXECUTING")
+    duplicate_id = check_duplicate_ticket(actual_issue)
+    
+    if duplicate_id:
+        context["duplicate_check"] = duplicate_id
+        context["response"] = f"""⚠️ A similar ticket already exists!
+
+**Existing Ticket ID:** {duplicate_id}
+**Issue:** {actual_issue}
+
+To avoid duplicates we haven't created a new ticket.
+Please reference the existing ticket ID above when contacting IT support.
+
+📧 swapniljoshi1729@gmail.com
+📞 +91 9371615190
+🕐 Monday–Friday, 9AM–6PM IST"""
+        context = update_state(context, "SUCCESS")
+        print(f"   ✅ Duplicate detected — skipping ticket creation")
+        return context
+
+    # ── Prepare ticket payload ──────────────────────────────────
 
     # ── Prepare ticket payload ──────────────────────────────────
     url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE}"
