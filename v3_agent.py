@@ -3,6 +3,7 @@ import anthropic
 import chromadb
 import requests
 from chromadb.utils import embedding_functions
+from pinecone_store import retrieve_pinecone, index_documents_pinecone
 
 # ── Load API Key ────────────────────────────────────────────────
 import os
@@ -127,26 +128,10 @@ Latest message: {context['user_message']}"""
 def knowledge_agent(context):
     print("\n📚 Knowledge Agent activated")
     print(f"   Searching knowledge base for: '{context['user_message']}'")
-    
-    # ── Initialize ChromaDB with failure handling ───────────────
-    try:
-        chroma_client = chromadb.PersistentClient(path="./chroma_db")
-        embedding_fn = embedding_functions.DefaultEmbeddingFunction()
-        collection = chroma_client.get_or_create_collection(
-            name="it_helpdesk_kb",
-            embedding_function=embedding_fn
-        )
-        context = update_state(context, "RETRIEVING")
-    except Exception as e:
-        print(f"   ❌ ChromaDB connection failed: {e}")
-        context["response"] = """Our knowledge base is temporarily unavailable.
 
-Please contact IT Support directly:
-📧 Email: swapniljoshi1729@gmail.com
-📞 Phone: +91 9371615190
-🕐 Available: Monday–Friday, 9AM–6PM IST"""
-        context["retrieval_log"] = [{"error": "ChromaDB connection failed", "detail": str(e)}]
-        return context
+    # ── Initialize retrieval — Pinecone cloud ───────────────────
+    context = update_state(context, "RETRIEVING")
+    
     
     # ── Smart search query from conversation history ────────────
     search_query = context["user_message"]
@@ -158,45 +143,64 @@ Please contact IT Support directly:
     
     print(f"   Searching for: '{search_query}'")
     
-    # ── Semantic search with failure handling ───────────────────
+        # ── Semantic search — Pinecone cloud ───────────────────────
     try:
-        results = collection.query(
-            query_texts=[search_query],
-            n_results=3,
-            include=["documents", "distances"]
+        pinecone_results = retrieve_pinecone(
+            search_query,
+            top_k=5,
+            category_filter=None  # global search first
         )
-        chunks = results["documents"][0]
-        distances = results["distances"][0]
+        
+        if not pinecone_results:
+            raise Exception("Pinecone returned no results")
+            
+        chunks = pinecone_results["documents"]
+        similarity_scores = [round(s, 3) for s in pinecone_results["scores"]]
+        metadatas = pinecone_results["metadatas"]
+        
     except Exception as e:
-        print(f"   ❌ ChromaDB query failed: {e}")
+        print(f"   ❌ Pinecone query failed: {e}")
         context["response"] = """Unable to search the knowledge base at this time.
 
 Please contact IT Support directly:
 📧 Email: swapniljoshi1729@gmail.com
 📞 Phone: +91 9371615190
 🕐 Available: Monday–Friday, 9AM–6PM IST"""
-        context["retrieval_log"] = [{"error": "ChromaDB query failed", "detail": str(e)}]
+        context["retrieval_log"] = [{"error": "Pinecone query failed", "detail": str(e)}]
+        context = update_state(context, "FAILED")
         return context
-    
+
     # ── Retrieval Logging ───────────────────────────────────────
-    similarity_scores = [round(1 / (1 + d), 3) for d in distances]
     
-    print(f"\n   📊 Retrieval Log:")
+        print(f"\n   📊 Retrieval Log — Pinecone Cloud:")
     print(f"   Query: '{search_query}'")
-    for i, (chunk, score) in enumerate(zip(chunks, similarity_scores)):
-        print(f"   Chunk {i+1} | Score: {score} | Preview: '{chunk[:60]}...'")
+    for i, (chunk, score, meta) in enumerate(zip(chunks, similarity_scores, metadatas)):
+        print(f"   Chunk {i+1} | Score: {score} | Category: {meta.get('category','')} | Preview: '{chunk[:60]}...'")
     
     context["retrieval_log"] = [
-        {"chunk_index": i+1, "similarity_score": score, "chunk_preview": chunk[:100]}
-        for i, (chunk, score) in enumerate(zip(chunks, similarity_scores))
+        {
+            "chunk_index": i+1,
+            "similarity_score": score,
+            "category": meta.get("category", ""),
+            "subcategory": meta.get("subcategory", ""),
+            "chunk_preview": chunk[:100]
+        }
+        for i, (chunk, score, meta) in enumerate(zip(chunks, similarity_scores, metadatas))
     ]
     
     # ── Similarity Threshold ────────────────────────────────────
-    SIMILARITY_THRESHOLD = 0.5
+        # Pinecone uses cosine similarity 0-1 directly
+    # Adjusted threshold for Pinecone scores
+    SIMILARITY_THRESHOLD = 0.4
     
     strong_chunks = [
         chunk for chunk, score
         in zip(chunks, similarity_scores)
+        if score >= SIMILARITY_THRESHOLD
+    ]
+    strong_metas = [
+        meta for meta, score
+        in zip(metadatas, similarity_scores)
         if score >= SIMILARITY_THRESHOLD
     ]
     
