@@ -1,6 +1,8 @@
 import streamlit as st
 import os
 from rbac import get_user_role, can_perform_action, get_allowed_categories, get_role_display
+from metrics import log_interaction, get_summary_stats
+import time
 
 # ── Google OAuth SSO ────────────────────────────────────────────
 if not st.user.is_logged_in:
@@ -72,121 +74,184 @@ st.title("🤖 Enterprise IT Helpdesk — Multi-Agent V3")
 st.caption(f"Powered by Multi-Agent RAG + ChromaDB + Claude AI + Airtable | Built by Swapnil Joshi | {role_display['icon']} {user_name} — {role_display['label']}")
 st.divider()
 
-# Agent status indicators
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.metric("🔀 Router Agent", "Active")
-with col2:
-    st.metric("📚 Knowledge Agent", "Active")
-with col3:
-    st.metric("🎫 Ticketing Agent", "Active")
+# ── Tabs — Chat + Dashboard ─────────────────────────────────────
+tab1, tab2 = st.tabs(["💬 Helpdesk Chat", "📊 Observability Dashboard"])
 
-st.divider()
+with tab1:
+    # Agent status indicators
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("🔀 Router Agent", "Active")
+    with col2:
+        st.metric("📚 Knowledge Agent", "Active")
+    with col3:
+        st.metric("🎫 Ticketing Agent", "Active")
 
-# Chat history
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-    st.session_state.messages.append({
-        "role": "assistant",
-        "content": "Hi! I'm your Multi-Agent IT Helpdesk assistant. I can answer IT questions or log support tickets automatically. How can I help you today?"
-    })
+    st.divider()
 
-if "awaiting_confirmation" not in st.session_state:
-    st.session_state.awaiting_confirmation = False
-if "pending_issue" not in st.session_state:
-    st.session_state.pending_issue = None
+    # Chat history
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": "Hi! I'm your Multi-Agent IT Helpdesk assistant. I can answer IT questions or log support tickets automatically. How can I help you today?"
+        })
 
-# Display chat history
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+    if "awaiting_confirmation" not in st.session_state:
+        st.session_state.awaiting_confirmation = False
+    if "pending_issue" not in st.session_state:
+        st.session_state.pending_issue = None
 
-# Chat input
-if prompt := st.chat_input("Ask your IT question or describe your issue..."):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+    # Display chat history
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-    with st.chat_message("assistant"):
-        
-        # Check if awaiting confirmation
-        if st.session_state.awaiting_confirmation:
-            confirmation_words = ["yes", "y", "yes please", "confirm", "go ahead", "proceed", 
-                      "sure", "ok", "okay", "correct", "right", "yep", "yeah", 
-                      "absolutely", "definitely", "please do", "do it"]
-            if any(word in prompt.lower().strip() for word in confirmation_words):
-                # User confirmed — create ticket
-                st.info("🔀 Router → 🎫 Ticketing Agent")
-                context = create_context(st.session_state.pending_issue, 
-                                       [m for m in st.session_state.messages])
-                context["intent"] = "TICKET"
-                context["confidence"] = 1.0
-                context = ticketing_agent(context)
-                response = context["response"]
-                st.session_state.awaiting_confirmation = False
-                st.session_state.pending_issue = None
-            else:
-                # User said something else — reset and reprocess
-                st.session_state.awaiting_confirmation = False
-                st.session_state.pending_issue = None
-                response = "No problem! How else can I help you?"
-            
-            st.markdown(response)
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": response
-            })
-        
-        else:
-            with st.spinner("Multi-agent system processing..."):
-                # Create shared context
-                context = create_context(prompt,
-                    [m for m in st.session_state.messages[:-1]])
-                context["user_role"] = user_role
-                context["user_email"] = user_email
-                
-                # Router Agent
-                context = router_agent(context)
-                intent = context["intent"]
-                confidence = context["confidence"]
-                
-                TICKET_CONFIDENCE_THRESHOLD = 0.90
-                
-                if context["intent"] == "KNOWLEDGE":
-                    st.info("🔀 Router → 📚 Knowledge Agent")
-                    context = knowledge_agent(context)
-                    response = context["response"]
-                    
-                elif context["intent"] == "TICKET" and context["confidence"] >= TICKET_CONFIDENCE_THRESHOLD:
-                # ── RBAC — check ticket creation permission ─────
-                 if can_perform_action(user_role, "create_ticket"):
+    # Chat input
+    if prompt := st.chat_input("Ask your IT question or describe your issue..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        with st.chat_message("assistant"):
+
+            # Check if awaiting confirmation
+            if st.session_state.awaiting_confirmation:
+                confirmation_words = ["yes", "y", "yes please", "confirm", "go ahead", "proceed",
+                          "sure", "ok", "okay", "correct", "right", "yep", "yeah",
+                          "absolutely", "definitely", "please do", "do it"]
+                if any(word in prompt.lower().strip() for word in confirmation_words):
                     st.info("🔀 Router → 🎫 Ticketing Agent")
-                    context["user_role"] = user_role
+                    context = create_context(st.session_state.pending_issue,
+                                           [m for m in st.session_state.messages])
+                    context["intent"] = "TICKET"
+                    context["confidence"] = 1.0
                     context = ticketing_agent(context)
                     response = context["response"]
-                 else:
-                    st.warning("🔀 Router → 🚫 Access Denied")
-                    response = f"""⛔ You don't have permission to create support tickets.
+                    st.session_state.awaiting_confirmation = False
+                    st.session_state.pending_issue = None
+                else:
+                    st.session_state.awaiting_confirmation = False
+                    st.session_state.pending_issue = None
+                    response = "No problem! How else can I help you?"
 
+                st.markdown(response)
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": response
+                })
+
+            else:
+                with st.spinner("Multi-agent system processing..."):
+                    start_time = time.time()
+                    context = create_context(prompt,
+                        [m for m in st.session_state.messages[:-1]])
+                    context["user_role"] = user_role
+                    context["user_email"] = user_email
+
+                    # Router Agent
+                    context = router_agent(context)
+                    intent = context["intent"]
+                    confidence = context["confidence"]
+
+                    TICKET_CONFIDENCE_THRESHOLD = 0.90
+
+                    if context["intent"] == "KNOWLEDGE":
+                        st.info("🔀 Router → 📚 Knowledge Agent")
+                        context = knowledge_agent(context)
+                        response = context["response"]
+
+                    elif context["intent"] == "TICKET" and context["confidence"] >= TICKET_CONFIDENCE_THRESHOLD:
+                        # ── RBAC — check ticket creation permission ─────
+                        if can_perform_action(user_role, "create_ticket"):
+                            st.info("🔀 Router → 🎫 Ticketing Agent")
+                            context["user_role"] = user_role
+                            context = ticketing_agent(context)
+                            response = context["response"]
+                        else:
+                            st.warning("🔀 Router → 🚫 Access Denied")
+                            response = f"""⛔ You don't have permission to create support tickets.
 Your role: **{role_display['label']}**
 
 Please contact your IT administrator or manager to raise a ticket on your behalf.
 📧 swapniljoshi1729@gmail.com"""
-                    
-                else:
-                    # CLARIFY or low confidence TICKET
-                    if context["intent"] == "TICKET":
-                        # Ask for confirmation before creating ticket
-                        response = f"I want to make sure I create the right ticket. Could you confirm — shall I log a support ticket for: '{prompt}'? (Reply 'yes' to confirm)"
-                        st.session_state.awaiting_confirmation = True
-                        st.session_state.pending_issue = prompt
+
                     else:
-                        response = "I want to make sure I help you correctly. Are you looking for troubleshooting guidance, or would you like me to create a support ticket? Please clarify and I'll take the right action."
-                    
-                    st.info("🔀 Router → ❓ Clarification needed")
-                    
-                st.markdown(response)
-                st.session_state.messages.append({
-                    "role": "assistant", 
-                    "content": response
-                })
+                        if context["intent"] == "TICKET":
+                            response = f"I want to make sure I create the right ticket. Could you confirm — shall I log a support ticket for: '{prompt}'? (Reply 'yes' to confirm)"
+                            st.session_state.awaiting_confirmation = True
+                            st.session_state.pending_issue = prompt
+                        else:
+                            response = "I want to make sure I help you correctly. Are you looking for troubleshooting guidance, or would you like me to create a support ticket? Please clarify and I'll take the right action."
+
+                        st.info("🔀 Router → ❓ Clarification needed")
+
+                    st.markdown(response)
+
+                    # ── Log interaction metrics ─────────────────
+                    latency_ms = round((time.time() - start_time) * 1000)
+                    log_interaction(
+                        context,
+                        latency_ms=latency_ms,
+                        user_email=user_email,
+                        user_role=user_role
+                    )
+
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": response
+                    })
+
+with tab2:
+    st.subheader("📊 System Observability Dashboard")
+
+    if can_perform_action(user_role, "view_all_tickets"):
+        stats = get_summary_stats()
+
+        if not stats:
+            st.info("No interactions logged yet. Start using the helpdesk to see metrics!")
+        else:
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total Interactions", stats["total_interactions"])
+            with col2:
+                st.metric("Success Rate", f"{stats['success_rate']}%")
+            with col3:
+                st.metric("Avg Latency", f"{stats['avg_latency_ms']}ms")
+            with col4:
+                st.metric("Clarification Rate", f"{stats['clarification_rate']}%")
+
+            st.divider()
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("Route Distribution")
+                route_data = stats["route_distribution"]
+                for route, count in route_data.items():
+                    pct = round(count / stats["total_interactions"] * 100) if stats["total_interactions"] else 0
+                    st.write(f"**{route}:** {count} ({pct}%)")
+                    st.progress(pct / 100)
+
+            with col2:
+                st.subheader("System Health")
+                st.write(f"✅ Retrieval Success Rate: **{stats['retrieval_success_rate']}%**")
+                st.write(f"🔄 Duplicate Tickets Caught: **{stats['duplicate_count']}**")
+                st.write(f"❌ Failed Interactions: **{stats['failed_count']}**")
+
+            st.divider()
+
+            st.subheader("Recent Interactions")
+            for interaction in reversed(stats["recent_interactions"]):
+                with st.expander(f"{interaction['timestamp'][:19]} — {interaction['intent']} — {interaction['workflow_state']}"):
+                    st.write(f"**Query:** {interaction['query']}")
+                    st.write(f"**Role:** {interaction['user_role']}")
+                    st.write(f"**Intent:** {interaction['intent']} ({round(interaction['confidence'] * 100)}% confidence)")
+                    st.write(f"**Workflow:** {' → '.join(interaction['workflow_history'])}")
+                    st.write(f"**Latency:** {interaction['latency_ms']}ms")
+                    if interaction['ticket_id']:
+                        st.write(f"**Ticket:** {interaction['ticket_id']}")
+                    if interaction['duplicate_detected']:
+                        st.write(f"⚠️ **Duplicate detected**")
+    else:
+        st.warning("⛔ Access denied — Observability dashboard requires IT Support or Admin role.")
+        st.write("Please contact your IT administrator for access.")
