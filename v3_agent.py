@@ -541,6 +541,7 @@ if __name__ == "__main__":
                 clarify_response = f"I want to make sure I create the right ticket. Could you confirm — shall I log a support ticket for: '{context['user_message']}'?"
             else:
                 clarify_response = "I want to make sure I help you correctly. Are you looking for troubleshooting guidance, or would you like me to create a support ticket? Please clarify and I'll take the right action."
+            context = update_state(context, "CLARIFY")
             print(f"\n❓ Clarification needed:\n{clarify_response}")
             conversation_history.append({
                 "role": "assistant",
