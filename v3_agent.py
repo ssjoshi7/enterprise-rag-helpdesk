@@ -330,7 +330,7 @@ def check_duplicate_ticket(actual_issue):
         return None
     
     headers = get_auth_header(creds["email"], creds["token"])
-    url = f"https://{creds['site']}/rest/api/3/search"
+    url = f"https://{creds['site']}/rest/api/3/search/jql"
     params = {
         "jql": f"project={creds['project_key']} ORDER BY created DESC",
         "maxResults": 10,
@@ -339,11 +339,14 @@ def check_duplicate_ticket(actual_issue):
     
     try:
         response = requests.get(url, headers=headers, params=params, timeout=10)
-        
+        #print(f"   🔎 JSM search status: {response.status_code}")
+        #if response.status_code != 200:
+            #print(f"   🔎 JSM search error: {response.text[:200]}")
         if response.status_code == 200:
             issues = response.json().get("issues", [])
-            
+            #print(f"   🔎 JSM returned {len(issues)} recent tickets")
             for issue in issues:
+                #print(f"   - {issue.get('key')}: {issue.get('fields', {}).get('summary', '')}")
                 existing_title = issue.get("fields", {}).get("summary", "").lower()
                 current_issue = actual_issue.lower()
                 
