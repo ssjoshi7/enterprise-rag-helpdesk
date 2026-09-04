@@ -4,6 +4,11 @@ import chromadb
 import requests
 from chromadb.utils import embedding_functions
 from pinecone_store import retrieve_pinecone, index_documents_pinecone
+from jsm_ticketing import create_jsm_ticket
+
+# ── Ticketing System Configuration ─────────────────────────────
+# Switch between "JSM" and "AIRTABLE" without code changes
+TICKETING_SYSTEM = os.getenv("TICKETING_SYSTEM", "JSM")  # Default to JSM
 
 # ── Load API Key ────────────────────────────────────────────────
 import os
@@ -312,29 +317,36 @@ Core issue:"""
 # ── Duplicate Ticket Detection ──────────────────────────────────
 def check_duplicate_ticket(actual_issue):
     """
-    Check Airtable for recent tickets with same issue.
+    Check JSM for recent tickets with same issue.
     Returns ticket_id if duplicate found, None otherwise.
     """
-    print(f"   🔍 Checking for duplicate tickets...")
+    print(f"   🔍 Checking for duplicate tickets in JSM...")
     
-    url = f"https://api.airtable.com/v0/{os.getenv('AIRTABLE_BASE_ID', 'appeA7AAUGMuiGmvp')}/Tickets"
-    headers = {
-        "Authorization": f"Bearer {AIRTABLE_TOKEN}",
-        "Content-Type": "application/json"
+    from jsm_ticketing import get_jsm_credentials, get_auth_header
+    
+    creds = get_jsm_credentials()
+    if not all(creds.values()):
+        print(f"   ⚠️ JSM credentials missing — skipping duplicate check")
+        return None
+    
+    headers = get_auth_header(creds["email"], creds["token"])
+    url = f"https://{creds['site']}/rest/api/3/search"
+    params = {
+        "jql": f"project={creds['project_key']} ORDER BY created DESC",
+        "maxResults": 10,
+        "fields": "summary,status"
     }
     
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers=headers, params=params, timeout=10)
         
         if response.status_code == 200:
-            records = response.json().get("records", [])
+            issues = response.json().get("issues", [])
             
-            # Check last 10 tickets for similar issue
-            for record in records[-10:]:
-                existing_title = record.get("fields", {}).get("Title", "").lower()
+            for issue in issues:
+                existing_title = issue.get("fields", {}).get("summary", "").lower()
                 current_issue = actual_issue.lower()
                 
-                # Simple similarity check — if 60%+ words match
                 existing_words = set(existing_title.split())
                 current_words = set(current_issue.split())
                 
@@ -342,10 +354,10 @@ def check_duplicate_ticket(actual_issue):
                     overlap = len(existing_words.intersection(current_words))
                     similarity = overlap / len(current_words)
                     
-                    if similarity >= 0.4:
-                        duplicate_id = record["id"]
-                        print(f"   ⚠️ Duplicate detected: {duplicate_id} — '{existing_title}'")
-                        return duplicate_id
+                    if similarity >= 0.6:
+                        ticket_id = issue.get("key")
+                        print(f"   ⚠️ Duplicate detected: {ticket_id} — '{existing_title}'")
+                        return ticket_id
             
             print(f"   ✅ No duplicate found — proceeding with ticket creation")
             return None
@@ -364,12 +376,7 @@ def ticketing_agent(context):
     print("\n🎫 Ticketing Agent activated")
     print(f"   Logging ticket for: '{context['user_message']}'")
     
-    # ── Airtable configuration ──────────────────────────────────
-    # AIRTABLE_TOKEN = os.getenv("AIRTABLE_TOKEN")
-    AIRTABLE_BASE_ID = "appeA7AAUGMuiGmvp"
-    AIRTABLE_TABLE = "Tickets"
-    MAX_RETRIES = 2
-    REQUEST_TIMEOUT = 10  # seconds
+    # JSM handles retries internally
 
     # ── Extract actual issue from conversation history ──────────
     actual_issue = extract_actual_issue(context)
@@ -396,43 +403,94 @@ Please reference the existing ticket ID above when contacting IT support.
         print(f"   ✅ Duplicate detected — skipping ticket creation")
         return context
 
-    # ── Prepare ticket payload ──────────────────────────────────
 
-    # ── Prepare ticket payload ──────────────────────────────────
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE}"
-    headers = {
-        "Authorization": f"Bearer {AIRTABLE_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "records": [{
-            "fields": {
-                "Title": actual_issue,
-                "Status": "Open",
-                "Urgency": "Medium"
-            }
-        }]
-    }
+    # # ── Prepare ticket payload ──────────────────────────────────
+    # url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE}"
+    # headers = {
+    #     "Authorization": f"Bearer {AIRTABLE_TOKEN}",
+    #     "Content-Type": "application/json"
+    # }
+    # payload = {
+    #     "records": [{
+    #         "fields": {
+    #             "Title": actual_issue,
+    #             "Status": "Open",
+    #             "Urgency": "Medium"
+    #         }
+    #     }]
+    # }
 
-    # ── API call with retry logic ───────────────────────────────
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            print(f"   🔄 Airtable API attempt {attempt}/{MAX_RETRIES}")
-            
-            response = requests.post(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=REQUEST_TIMEOUT
-            )
+        # ── Create JSM ticket ───────────────────────────────────────
+        # ── Create ticket — provider agnostic ──────────────────────
+    if TICKETING_SYSTEM == "JSM":
+        # ── Jira Service Management ─────────────────────────
+        ticket_id, ticket_url = create_jsm_ticket(
+            actual_issue,
+            user_email=context.get("user_email", "unknown"),
+            urgency="Medium"
+        )
+        
+        if ticket_id:
+            context["ticket_id"] = ticket_id
+            context["response"] = f"""✅ Support ticket created in Jira Service Management!
 
-            # ── Validate response status ────────────────────────
-            if response.status_code == 200:
-                try:
-                    record = response.json()["records"][0]
-                    ticket_id = record["id"]
-                    context["ticket_id"] = ticket_id
-                    context["response"] = f"""✅ Support ticket logged successfully!
+**Ticket ID:** {ticket_id}
+**Issue:** {actual_issue}
+**Status:** Open
+**Priority:** Medium
+**Track your ticket:** {ticket_url}
+
+Our IT team will follow up at:
+📧 swapniljoshi1729@gmail.com
+📞 +91 9371615190
+🕐 Monday–Friday, 9AM–6PM IST"""
+            context = update_state(context, "SUCCESS")
+            print(f"   ✅ JSM ticket created: {ticket_id}")
+        else:
+            context["response"] = """⚠️ Could not create ticket in Jira Service Management.
+Please contact IT support directly:
+📧 swapniljoshi1729@gmail.com
+📞 +91 9371615190"""
+            context = update_state(context, "FAILED")
+
+    else:
+        # ── Airtable fallback ───────────────────────────────
+        AIRTABLE_BASE_ID = "appeA7AAUGMuiGmvp"
+        AIRTABLE_TABLE = "Tickets"
+        MAX_RETRIES = 2
+        REQUEST_TIMEOUT = 10
+
+        url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE}"
+        headers = {
+            "Authorization": f"Bearer {AIRTABLE_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "records": [{
+                "fields": {
+                    "Title": actual_issue,
+                    "Status": "Open",
+                    "Urgency": "Medium"
+                }
+            }]
+        }
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                print(f"   🔄 Airtable API attempt {attempt}/{MAX_RETRIES}")
+                response = requests.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                    timeout=REQUEST_TIMEOUT
+                )
+
+                if response.status_code == 200:
+                    try:
+                        record = response.json()["records"][0]
+                        ticket_id = record["id"]
+                        context["ticket_id"] = ticket_id
+                        context["response"] = f"""✅ Support ticket logged successfully!
 
 **Ticket ID:** {ticket_id}
 **Issue:** {actual_issue}
@@ -443,65 +501,45 @@ Our IT team will follow up at:
 📧 swapniljoshi1729@gmail.com
 📞 +91 9371615190
 🕐 Monday–Friday, 9AM–6PM IST"""
-                    print(f"   ✅ Ticket created: {ticket_id}")
-                    return context
-
-                except (KeyError, IndexError, ValueError) as e:
-                    print(f"   ⚠️ Malformed Airtable response: {e}")
-                    if attempt == MAX_RETRIES:
-                        context["response"] = """⚠️ Ticket was submitted but response was unexpected.
+                        context = update_state(context, "SUCCESS")
+                        print(f"   ✅ Airtable ticket created: {ticket_id}")
+                        return context
+                    except (KeyError, IndexError, ValueError) as e:
+                        print(f"   ⚠️ Malformed Airtable response: {e}")
+                        if attempt == MAX_RETRIES:
+                            context["response"] = """⚠️ Ticket submitted but response unexpected.
 Please contact IT support to confirm:
 📧 swapniljoshi1729@gmail.com
 📞 +91 9371615190"""
-                    continue
+                        continue
 
-            elif response.status_code == 401:
-                print(f"   ❌ Airtable authentication failed — invalid token")
-                context["response"] = """⚠️ Unable to log ticket — authentication error.
-Please contact IT support directly:
-📧 swapniljoshi1729@gmail.com
-📞 +91 9371615190"""
-                return context
+                elif response.status_code == 401:
+                    print(f"   ❌ Airtable authentication failed")
+                    context["response"] = """⚠️ Unable to log ticket — authentication error.
+📧 swapniljoshi1729@gmail.com"""
+                    context = update_state(context, "FAILED")
+                    return context
 
-            elif response.status_code == 422:
-                print(f"   ❌ Airtable rejected payload — malformed data")
-                context["response"] = """⚠️ Unable to log ticket — invalid ticket data.
-Please contact IT support directly:
-📧 swapniljoshi1729@gmail.com
-📞 +91 9371615190"""
-                return context
+                else:
+                    print(f"   ⚠️ Airtable returned status {response.status_code}")
+                    if attempt == MAX_RETRIES:
+                        context["response"] = f"""⚠️ Could not log ticket (Error {response.status_code}).
+📧 swapniljoshi1729@gmail.com"""
+                        context = update_state(context, "FAILED")
 
-            else:
-                print(f"   ⚠️ Airtable returned status {response.status_code}")
+            except requests.exceptions.Timeout:
+                print(f"   ⚠️ Airtable timeout on attempt {attempt}")
                 if attempt == MAX_RETRIES:
-                    context["response"] = f"""⚠️ Could not log ticket automatically (Error {response.status_code}).
-Please contact IT support directly:
-📧 swapniljoshi1729@gmail.com
-📞 +91 9371615190"""
+                    context["response"] = """⚠️ Ticket logging timed out.
+📧 swapniljoshi1729@gmail.com"""
+                    context = update_state(context, "FAILED")
 
-        except requests.exceptions.Timeout:
-            print(f"   ⚠️ Airtable request timed out on attempt {attempt}")
-            if attempt == MAX_RETRIES:
-                context["response"] = """⚠️ Ticket logging timed out after multiple attempts.
-Please contact IT support directly:
-📧 swapniljoshi1729@gmail.com
-📞 +91 9371615190"""
-
-        except requests.exceptions.ConnectionError:
-            print(f"   ⚠️ Airtable connection error on attempt {attempt}")
-            if attempt == MAX_RETRIES:
-                context["response"] = """⚠️ Unable to reach ticketing system.
-Please contact IT support directly:
-📧 swapniljoshi1729@gmail.com
-📞 +91 9371615190"""
-
-        except Exception as e:
-            print(f"   ⚠️ Unexpected error on attempt {attempt}: {e}")
-            if attempt == MAX_RETRIES:
-                context["response"] = """⚠️ An unexpected error occurred while logging your ticket.
-Please contact IT support directly:
-📧 swapniljoshi1729@gmail.com
-📞 +91 9371615190"""
+            except Exception as e:
+                print(f"   ⚠️ Unexpected error on attempt {attempt}: {e}")
+                if attempt == MAX_RETRIES:
+                    context["response"] = """⚠️ Unexpected error logging ticket.
+📧 swapniljoshi1729@gmail.com"""
+                    context = update_state(context, "FAILED")
 
     return context
 
