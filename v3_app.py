@@ -70,7 +70,7 @@ st.set_page_config(
     layout="centered"
 )
 
-st.title("🤖 Enterprise IT Helpdesk — Multi-Agent V3→V4.5")
+st.title("🤖 Enterprise IT Helpdesk — Agentic RAG V4.5")
 st.caption(f"Powered by Multi-Agent RAG + Pinecone + Claude AI + JSM | Built by Swapnil Joshi | {role_display['icon']} {user_name} — {role_display['label']}")
 st.divider()
 
